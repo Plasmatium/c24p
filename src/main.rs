@@ -5,7 +5,7 @@ use std::rc::Rc;
 use num_rational::Rational32;
 
 fn main() {
-    let original_deck = vec![10,10,4,4];
+    let original_deck = vec![1,1,1,1];
     let deck = original_deck
         .iter()
         .map(|&n| Rational32::from(n))
@@ -155,6 +155,9 @@ fn calc_possible_remain_ops(
 
     // picked * original_target
     let target = picked_number * original_target;
+    if target == 0.into() {
+        return None;
+    }
     let remain_op = eval(remain.clone(), target);
     if let Some(remain_op) = remain_op {
         return Some(Item::Op(Rc::new(Op::Div(remain_op, picked))));
