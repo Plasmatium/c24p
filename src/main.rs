@@ -3,9 +3,12 @@
 use std::rc::Rc;
 
 use num_rational::Rational32;
+use tracing::{debug, info};
 
 fn main() {
-    let original_deck = vec![1,1,1,1];
+    tracing_subscriber::fmt::init();
+
+    let original_deck = vec![3,3,7,7];
     let deck = original_deck
         .iter()
         .map(|&n| Rational32::from(n))
@@ -13,9 +16,9 @@ fn main() {
     let target = Rational32::from(24);
     let result = eval(deck, target);
     if let Some(solution) = result {
-        println!("deck: {original_deck:?}, target: {target}, solution: {} = {}", solution, target);
+        info!("deck: {original_deck:?}, target: {target}, solution: {} = {}", solution, target);
     } else {
-        println!("no solution found")
+        info!("no solution found")
     }
 }
 
@@ -78,7 +81,7 @@ impl From<Op> for Item {
 }
 
 fn eval(deck: Vec<Rational32>, target: Rational32) -> Option<Item> {
-    println!("deck: {}, target: {target:?}", deck_str(&deck));
+    debug!("deck: {}, target: {target:?}", deck_str(&deck));
     if deck.len() > 4 {
         panic!(
             "too many numbers in deck, shuld be 4 at most, got {}",
@@ -128,7 +131,7 @@ fn calc_possible_remain_ops(
     original_target: Rational32,
     remain: Vec<Rational32>,
 ) -> Option<Item> {
-    println!("picked: {picked}, original_target: {original_target}, remain: {}", deck_str(&remain));
+    debug!("picked: {picked}, original_target: {original_target}, remain: {}", deck_str(&remain));
     let picked_number = picked.calc();
 
     // consider all possible targets: n / target, n * target, n - target, n + target
