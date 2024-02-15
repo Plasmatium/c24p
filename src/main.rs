@@ -1,27 +1,33 @@
 // calc 24 point game in Rust
 
-use std::rc::Rc;
+use std::{
+    collections::HashSet,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
+};
 
 use num_rational::Rational32;
+use rayon::prelude::*;
 use tracing::{debug, info};
 
 fn main() {
     tracing_subscriber::fmt::init();
-
-    let original_deck = vec![3,3,7,7];
+    let original_deck = vec![10,10,4,3];
     let deck = original_deck
         .iter()
-        .map(|&n| Rational32::from(n))
-        .collect();
+        .map(|&n| Item::Number(Rational32::from(n)))
+        .collect::<Vec<_>>();
+    info!("start on deck: {}", sprint_deck(&deck));
     let target = Rational32::from(24);
-    let result = eval(deck, target);
-    if let Some(solution) = result {
-        info!("deck: {original_deck:?}, target: {target}, solution: {} = {}", solution, target);
-    } else {
-        info!("no solution found")
+    let mut results = build_trees(&deck);
+    results.retain(|item| item.calc() == target);
+    info!("founded {} results", results.len());
+    for r in results {
+        info!("{r}");
     }
 }
 
+#[derive(Clone, Eq)]
 enum Op {
     Add(Item, Item),
     Sub(Item, Item),
@@ -42,18 +48,59 @@ impl Op {
 
 impl std::fmt::Display for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        return match self {
+        match self {
             Op::Add(a, b) => write!(f, "{} + {}", a, b),
             Op::Sub(a, b) => write!(f, "{} - {}", a, b),
             Op::Mul(a, b) => write!(f, "{} * {}", a, b),
             Op::Div(a, b) => write!(f, "{} / {}", a, b),
-        };
+        }
     }
 }
 
+// this is to ensure that the hash values of additions and multiplications that
+// satisfy the commutative law are independent of the order of the operands.
+impl std::cmp::PartialEq for Op {
+    fn eq(&self, other: &Self) -> bool {
+        self.calc() == other.calc()
+    }
+}
+
+// this is to ensure that the hash values of additions and multiplications
+// that satisfy the commutative law are independent of the order of the operands.
+impl Hash for Op {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let (op, a, b) = match self {
+            Op::Add(a, b) => ("+", a, b),
+            Op::Sub(a, b) => ("-", a, b),
+            Op::Mul(a, b) => ("*", a, b),
+            Op::Div(a, b) => ("/", a, b),
+        };
+        if ["-", "/"].contains(&op) {
+            a.hash(state);
+            b.hash(state);
+        } else {
+            let mut hasher1 = DefaultHasher::new();
+            let mut hasher2 = DefaultHasher::new();
+            a.hash(&mut hasher1);
+            b.hash(&mut hasher2);
+            let hash1 = hasher1.finish();
+            let hash2 = hasher2.finish();
+            let combined_hash = hash1.wrapping_add(hash2);
+            combined_hash.hash(state);
+        }
+    }
+}
+
+impl From<Op> for Item {
+    fn from(op: Op) -> Self {
+        Item::Op(Arc::new(op))
+    }
+}
+
+#[derive(Clone, Eq, Hash)]
 enum Item {
     Number(Rational32),
-    Op(Rc<Op>),
+    Op(Arc<Op>),
 }
 
 impl Item {
@@ -61,6 +108,16 @@ impl Item {
         match self {
             Item::Number(n) => *n,
             Item::Op(op) => op.calc(),
+        }
+    }
+}
+
+impl std::cmp::PartialEq for Item {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Item::Number(a), Item::Number(b)) => a == b,
+            (Item::Op(a), Item::Op(b)) => a == b,
+            _ => false,
         }
     }
 }
@@ -74,149 +131,66 @@ impl std::fmt::Display for Item {
     }
 }
 
-impl From<Op> for Item {
-    fn from(op: Op) -> Self {
-        Item::Op(op.into())
-    }
+fn sprint_deck(deck: &[Item]) -> String {
+    deck.iter()
+        .map(|item| item.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
-fn eval(deck: Vec<Rational32>, target: Rational32) -> Option<Item> {
-    debug!("deck: {}, target: {target:?}", deck_str(&deck));
-    if deck.len() > 4 {
-        panic!(
-            "too many numbers in deck, shuld be 4 at most, got {}",
-            deck.len()
-        );
+fn build_all_possible(a: &Item, b: &Item) -> Vec<Item> {
+    debug!("building all possible for {} and {}", a, b);
+    let mut ret = Vec::with_capacity(6);
+    ret.push(Op::Add(a.clone(), b.clone()).into());
+    ret.push(Op::Sub(a.clone(), b.clone()).into());
+    ret.push(Op::Sub(b.clone(), a.clone()).into());
+    ret.push(Op::Mul(a.clone(), b.clone()).into());
+    if b.calc() != 0.into() {
+        ret.push(Op::Div(a.clone(), b.clone()).into());
+    }
+    if a.calc() != 0.into() {
+        ret.push(Op::Div(b.clone(), a.clone()).into());
     }
 
+    ret
+}
+
+fn build_trees(deck: &[Item]) -> HashSet<Item> {
     if deck.len() == 1 {
-        if deck[0] == target {
-            // last one matched, return the number
-            return Some(Item::Number(target));
+        return deck.iter().cloned().collect();
+    }
+    // use bitset to construct selection
+    let max_bitset: u128 = 1 << (deck.len() - 1);
+    (1..max_bitset)
+        .into_par_iter()
+        .flat_map(|bitset| {
+            let (left, right) = select(deck, bitset);
+            let left_trees = build_trees(&left);
+            let right_trees = build_trees(&right);
+            left_trees
+                .par_iter()
+                .flat_map(|left_tree| {
+                    right_trees
+                        .par_iter()
+                        .flat_map(move |right_tree| build_all_possible(&left_tree, &right_tree))
+                })
+                .collect::<HashSet<_>>()
+        })
+        .collect()
+}
+
+fn select<T: Clone>(slice: &[T], bitset: u128) -> (Vec<T>, Vec<T>) {
+    if bitset > 1 << slice.len() {
+        panic!("bitset out of range");
+    }
+    let mut left = Vec::with_capacity(bitset.count_ones() as usize);
+    let mut right = Vec::with_capacity(bitset.count_zeros() as usize);
+    for i in 0..slice.len() {
+        if bitset & (1 << i) != 0 {
+            left.push(slice[i].clone());
+        } else {
+            right.push(slice[i].clone());
         }
-        return None;
     }
-
-    // pick one number from deck and try all possible ops
-    // for each op, try to eval the remain deck with the target
-    for i in 0..deck.len() {
-        let mut deck = deck.clone();
-        let picked_number = deck.remove(i);
-        let picked = Item::Number(picked_number);
-        let result = calc_possible_remain_ops(picked, target, deck);
-        if result.is_some() {
-            return result;
-        }
-    }
-
-    // pick two numbers from deck and try all possible ops
-    // for each op, try to eval the remain deck with the target
-    // only consider deck.len() == 4 case
-    if deck.len() == 4 {
-        for [part1, part2] in split_deck(deck) {
-            for op in get_possible_ops(part1) {
-                let result = calc_possible_remain_ops(op.into(), 24.into(), part2.to_vec());
-                if result.is_some() {
-                    return result;
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn calc_possible_remain_ops(
-    picked: Item,
-    original_target: Rational32,
-    remain: Vec<Rational32>,
-) -> Option<Item> {
-    debug!("picked: {picked}, original_target: {original_target}, remain: {}", deck_str(&remain));
-    let picked_number = picked.calc();
-
-    // consider all possible targets: n / target, n * target, n - target, n + target
-    // picked + original_target
-    let target = picked_number + original_target;
-    let remain_op = eval(remain.clone(), target);
-    if let Some(remain_op) = remain_op {
-        return Some(Item::Op(Rc::new(Op::Sub(remain_op, picked))));
-    }
-
-    // picked - original_target
-    let target = picked_number - original_target;
-    let remain_op = eval(remain.clone(), target);
-    if let Some(remain_op) = remain_op {
-        return Some(Item::Op(Rc::new(Op::Add(remain_op, picked))));
-    }
-
-    // original_target - picked
-    let target = original_target - picked_number;
-    let remain_op = eval(remain.clone(), target);
-    if let Some(remain_op) = remain_op {
-        return Some(Item::Op(Rc::new(Op::Add(remain_op, picked))));
-    }
-
-    // picked * original_target
-    let target = picked_number * original_target;
-    if target == 0.into() {
-        return None;
-    }
-    let remain_op = eval(remain.clone(), target);
-    if let Some(remain_op) = remain_op {
-        return Some(Item::Op(Rc::new(Op::Div(remain_op, picked))));
-    }
-
-    // picked / original_target
-    let target = picked_number / original_target;
-    let remain_op = eval(remain.clone(), target);
-    if let Some(remain_op) = remain_op {
-        return Some(Item::Op(Rc::new(Op::Div(picked, remain_op))));
-    }
-
-    // original_target / picked
-    let target = original_target / picked_number;
-    let remain_op = eval(remain.clone(), target);
-    if let Some(remain_op) = remain_op {
-        return Some(Item::Op(Rc::new(Op::Mul(remain_op, picked))));
-    }
-
-    None
-}
-
-// split a deck with lenth == 4, into two sub-decks with length == 2, returns an iterator
-// for example, original deck is [1,2,3,4], then yields:
-// ([1,2], [3,4])
-// ([1,3], [2,4])
-// ([1,4], [2,3])
-fn split_deck(deck: Vec<Rational32>) -> [[[Rational32; 2]; 2]; 3] {
-    [
-        [[deck[0], deck[1]], [deck[2], deck[3]]],
-        [[deck[0], deck[2]], [deck[1], deck[3]]],
-        [[deck[0], deck[3]], [deck[1], deck[2]]],
-    ]
-}
-
-// calc all possible operations for two numbers
-// for example, a and b:
-// a + b
-// a - b
-// b - a
-// a * b
-// a / b
-// b / a
-fn get_possible_ops(parts: [Rational32; 2]) -> [Op; 6] {
-    let [a, b] = parts;
-    [
-        Op::Add(Item::Number(a), Item::Number(b)),
-        Op::Sub(Item::Number(a), Item::Number(b)),
-        Op::Sub(Item::Number(b), Item::Number(a)),
-        Op::Mul(Item::Number(a), Item::Number(b)),
-        Op::Div(Item::Number(a), Item::Number(b)),
-        Op::Div(Item::Number(b), Item::Number(a)),
-    ]
-}
-
-fn deck_str(deck: &[Rational32]) -> String {
-    let deck_str = deck.iter().map(|n| n.to_string()).collect::<Vec<_>>();
-    deck_str.join(", ")
+    (left, right)
 }
