@@ -1,18 +1,20 @@
 // calc 24 point game in Rust
 
+mod pointer_test;
+
+use rayon::prelude::*;
+
 use std::{
     collections::HashSet,
-    hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
+    hash::{DefaultHasher, Hash, Hasher}, sync::Arc,
 };
 
 use num_rational::Rational32;
-use rayon::prelude::*;
 use tracing::{debug, info};
 
 fn main() {
     tracing_subscriber::fmt::init();
-    let original_deck = vec![10,10,4,3];
+    let original_deck = [4,5,6,7];
     let deck = original_deck
         .iter()
         .map(|&n| Item::Number(Rational32::from(n)))
@@ -161,8 +163,7 @@ fn build_trees(deck: &[Item]) -> HashSet<Item> {
     }
     // use bitset to construct selection
     let max_bitset: u128 = 1 << (deck.len() - 1);
-    (1..max_bitset)
-        .into_par_iter()
+    (1..max_bitset).into_par_iter()
         .flat_map(|bitset| {
             let (left, right) = select(deck, bitset);
             let left_trees = build_trees(&left);
@@ -193,4 +194,9 @@ fn select<T: Clone>(slice: &[T], bitset: u128) -> (Vec<T>, Vec<T>) {
         }
     }
     (left, right)
+}
+
+fn test() {
+    let par_iter = (1..10).into_par_iter();
+    let iter = (1..10).into_iter().collect::<Vec<_>>().iter();
 }
