@@ -12,15 +12,14 @@ use tracing::{debug, info};
 
 fn main() {
     tracing_subscriber::fmt::init();
-    let original_deck = vec![10,10,4,3];
+    let original_deck = vec![1,1,2,3,5,8];
     let deck = original_deck
         .iter()
-        .map(|&n| Item::Number(Rational32::from(n)))
+        .map(|&n| Item::Number(Rational32::from(n).into()))
         .collect::<Vec<_>>();
     info!("start on deck: {}", sprint_deck(&deck));
     let target = Rational32::from(24);
-    let mut results = build_trees(&deck);
-    results.retain(|item| item.calc() == target);
+    let results = build_trees(&deck, target, true);
     info!("founded {} results", results.len());
     for r in results {
         info!("{r}");
@@ -93,20 +92,20 @@ impl Hash for Op {
 
 impl From<Op> for Item {
     fn from(op: Op) -> Self {
-        Item::Op(Arc::new(op))
+        Item::Op(op.into())
     }
 }
 
 #[derive(Clone, Eq, Hash)]
 enum Item {
-    Number(Rational32),
+    Number(Arc<Rational32>),
     Op(Arc<Op>),
 }
 
 impl Item {
     fn calc(&self) -> Rational32 {
         match self {
-            Item::Number(n) => *n,
+            Item::Number(n) => **n,
             Item::Op(op) => op.calc(),
         }
     }
@@ -155,28 +154,30 @@ fn build_all_possible(a: &Item, b: &Item) -> Vec<Item> {
     ret
 }
 
-fn build_trees(deck: &[Item]) -> HashSet<Item> {
+fn build_trees(deck: &[Item], target: Rational32, top_level: bool) -> HashSet<Item> {
     if deck.len() == 1 {
         return deck.iter().cloned().collect();
     }
     // use bitset to construct selection
     let max_bitset: u128 = 1 << (deck.len() - 1);
-    (1..max_bitset)
-        .into_par_iter()
-        .flat_map(|bitset| {
-            let (left, right) = select(deck, bitset);
-            let left_trees = build_trees(&left);
-            let right_trees = build_trees(&right);
-            left_trees
-                .par_iter()
-                .flat_map(|left_tree| {
-                    right_trees
-                        .par_iter()
-                        .flat_map(move |right_tree| build_all_possible(&left_tree, &right_tree))
-                })
-                .collect::<HashSet<_>>()
-        })
-        .collect()
+    let ret_iter = (1..max_bitset).into_par_iter().flat_map(|bitset| {
+        let (left, right) = select(deck, bitset);
+        let left_trees = build_trees(&left, target, false);
+        let right_trees = build_trees(&right, target, false);
+        left_trees
+            .par_iter()
+            .flat_map(|left_tree| {
+                right_trees
+                    .par_iter()
+                    .flat_map(move |right_tree| build_all_possible(&left_tree, &right_tree))
+            })
+            .collect::<HashSet<_>>()
+    });
+    if top_level {
+        ret_iter.filter(|item| item.calc() == target).collect()
+    } else {
+        ret_iter.collect()
+    }
 }
 
 fn select<T: Clone>(slice: &[T], bitset: u128) -> (Vec<T>, Vec<T>) {
