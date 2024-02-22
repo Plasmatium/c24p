@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashSet,
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::Hash,
     sync::Arc,
 };
 
@@ -12,7 +12,7 @@ use tracing::{debug, info};
 
 fn main() {
     tracing_subscriber::fmt::init();
-    let original_deck = vec![1,1,2,3,5,8];
+    let original_deck = vec![1,2,3,4];
     let deck = original_deck
         .iter()
         .map(|&n| Item::Number(Rational32::from(n).into()))
@@ -26,7 +26,7 @@ fn main() {
     }
 }
 
-#[derive(Clone, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Op {
     Add(Item, Item),
     Sub(Item, Item),
@@ -56,39 +56,13 @@ impl std::fmt::Display for Op {
     }
 }
 
-// this is to ensure that the hash values of additions and multiplications that
-// satisfy the commutative law are independent of the order of the operands.
-impl std::cmp::PartialEq for Op {
-    fn eq(&self, other: &Self) -> bool {
-        self.calc() == other.calc()
-    }
-}
-
-// this is to ensure that the hash values of additions and multiplications
-// that satisfy the commutative law are independent of the order of the operands.
-impl Hash for Op {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let (op, a, b) = match self {
-            Op::Add(a, b) => ("+", a, b),
-            Op::Sub(a, b) => ("-", a, b),
-            Op::Mul(a, b) => ("*", a, b),
-            Op::Div(a, b) => ("/", a, b),
-        };
-        if ["-", "/"].contains(&op) {
-            a.hash(state);
-            b.hash(state);
-        } else {
-            let mut hasher1 = DefaultHasher::new();
-            let mut hasher2 = DefaultHasher::new();
-            a.hash(&mut hasher1);
-            b.hash(&mut hasher2);
-            let hash1 = hasher1.finish();
-            let hash2 = hasher2.finish();
-            let combined_hash = hash1.wrapping_add(hash2);
-            combined_hash.hash(state);
-        }
-    }
-}
+// // this is to ensure that the hash values of additions and multiplications that
+// // satisfy the commutative law are independent of the order of the operands.
+// impl std::cmp::PartialEq for Op {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.calc() == other.calc()
+//     }
+// }
 
 impl From<Op> for Item {
     fn from(op: Op) -> Self {
@@ -96,7 +70,7 @@ impl From<Op> for Item {
     }
 }
 
-#[derive(Clone, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Item {
     Number(Arc<Rational32>),
     Op(Arc<Op>),
@@ -107,16 +81,6 @@ impl Item {
         match self {
             Item::Number(n) => **n,
             Item::Op(op) => op.calc(),
-        }
-    }
-}
-
-impl std::cmp::PartialEq for Item {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Item::Number(a), Item::Number(b)) => a == b,
-            (Item::Op(a), Item::Op(b)) => a == b,
-            _ => false,
         }
     }
 }
