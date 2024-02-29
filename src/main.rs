@@ -12,10 +12,10 @@ use tracing::{debug, info};
 
 fn main() {
     tracing_subscriber::fmt::init();
-    let original_deck = vec![1,2,3,4];
+    let original_deck = vec![1,1,2,3,5,8];
     let deck = original_deck
         .iter()
-        .map(|&n| Item::Number(Rational32::from(n).into()))
+        .map(|&n| Expr::Number(Rational32::from(n).into()))
         .collect::<Vec<_>>();
     info!("start on deck: {}", sprint_deck(&deck));
     let target = Rational32::from(24);
@@ -28,10 +28,10 @@ fn main() {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Op {
-    Add(Item, Item),
-    Sub(Item, Item),
-    Mul(Item, Item),
-    Div(Item, Item),
+    Add(Expr, Expr),
+    Sub(Expr, Expr),
+    Mul(Expr, Expr),
+    Div(Expr, Expr),
 }
 
 impl Op {
@@ -64,44 +64,44 @@ impl std::fmt::Display for Op {
 //     }
 // }
 
-impl From<Op> for Item {
+impl From<Op> for Expr {
     fn from(op: Op) -> Self {
-        Item::Op(op.into())
+        Expr::Op(op.into())
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-enum Item {
+enum Expr {
     Number(Arc<Rational32>),
     Op(Arc<Op>),
 }
 
-impl Item {
+impl Expr {
     fn calc(&self) -> Rational32 {
         match self {
-            Item::Number(n) => **n,
-            Item::Op(op) => op.calc(),
+            Expr::Number(n) => **n,
+            Expr::Op(op) => op.calc(),
         }
     }
 }
 
-impl std::fmt::Display for Item {
+impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Item::Number(n) => write!(f, "{}", n),
-            Item::Op(op) => write!(f, "({})", op),
+            Expr::Number(n) => write!(f, "{}", n),
+            Expr::Op(op) => write!(f, "({})", op),
         }
     }
 }
 
-fn sprint_deck(deck: &[Item]) -> String {
+fn sprint_deck(deck: &[Expr]) -> String {
     deck.iter()
         .map(|item| item.to_string())
         .collect::<Vec<_>>()
         .join(",")
 }
 
-fn build_all_possible(a: &Item, b: &Item) -> Vec<Item> {
+fn build_all_possible(a: &Expr, b: &Expr) -> Vec<Expr> {
     debug!("building all possible for {} and {}", a, b);
     let mut ret = Vec::with_capacity(6);
     ret.push(Op::Add(a.clone(), b.clone()).into());
@@ -118,7 +118,7 @@ fn build_all_possible(a: &Item, b: &Item) -> Vec<Item> {
     ret
 }
 
-fn build_trees(deck: &[Item], target: Rational32, top_level: bool) -> HashSet<Item> {
+fn build_trees(deck: &[Expr], target: Rational32, top_level: bool) -> HashSet<Expr> {
     if deck.len() == 1 {
         return deck.iter().cloned().collect();
     }
